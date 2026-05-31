@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+.web-clip.json
+.DS_Store
