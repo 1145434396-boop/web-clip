@@ -101,6 +101,13 @@ npx skills add github:1145434396-boop/web-clip -g
 - “帮我把这篇文章存下来：https://…”
 - “剪藏这几个链接到我的知识库”
 
+## 和 Chrome 插件版的区别：什么时候用哪个
+
+web-clip 有两种形态，能力互补：
+
+- **用本仓库（CLI skill）**：让 Claude / agent **自动、批量**剪藏，落到**任意指定目录**，或要抓**飞书文档内嵌的电子表格 / 多维表格**数据（可带登录态拉真实数据）。需本地有 Python + Playwright 环境。
+- **用 [Chrome 插件](https://github.com/1145434396-boop/web-clip-extension)**：你正在浏览器里看到一篇想**随手存**、尤其是**需要登录才能看的页面**（知乎 / 飞书 / 内网）——它直接用你当前浏览器的登录会话，零环境依赖。
+
 ## License
 
 MIT
