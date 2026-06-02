@@ -91,7 +91,15 @@ python scripts/clip.py --set-out "/path/to/notes"
 ## 作为 Claude Code / agent skill 使用
 
 仓库本身就是一个 skill：`SKILL.md` 描述触发条件与执行流程，`scripts/clip.py` 是实现。
-放进 `~/.claude/skills/` 或对应 agent 的 skills 目录即可被自动发现。
+
+```bash
+npx skills add github:1145434396-boop/web-clip -g
+```
+
+安装后在 Claude Code 中直接对话即可，例如：
+
+- "帮我把这篇文章存下来：https://..."
+- "剪藏这几个链接到我的知识库"
 
 ## License
 

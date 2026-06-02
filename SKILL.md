@@ -77,23 +77,6 @@ python <skill_dir>/scripts/clip.py "<URL>"
   - `img_missing:N` → N 张图引用了但没下下来
   - `ok: false` → 已写 stub，正文未抓到
 
-## 路由策略（脚本内部自动判断，无需干预）
-
-| 来源 | 方法 | 说明 |
-|------|------|------|
-| `mp.weixin.qq.com` | urllib + 浏览器 UA → lxml 遍历 `js_content` | 服务端渲染，零浏览器；带 UA 绕反爬 |
-| `*.feishu.cn` / `larksuite.com` / `doubao.com` | Playwright 分段滚动 + `data-block-id` 重排 | SPA + 虚拟滚动，必须真浏览器 |
-| `zhihu.com` | 非 headless 真实 Chrome 渲染 + 反自动化 → trafilatura | headless 会被风控拦，必须真浏览器 |
-| `xiaohongshu.com` / `xhslink.com` | urllib 拿文案（initial-state，免登录）+ `urlDefault` 提图 | 笔记图片作图库附正文后 |
-| 其它（博客等） | urllib + trafilatura；失败转渲染分支 | 图片直链下载改本地路径 |
-| 任一失败 | 写 stub | 保住链接，`status: failed`，待人工补 |
-
-**渲染分支**（知乎及通用兜底）默认非 headless（`headless=False` + chrome channel + 屏蔽 `navigator.webdriver`）。
-无显示器的服务器：需用 `xvfb-run` 包裹，或设环境变量 `CLIP_HEADLESS=1`（但 headless 可能重新被风控拦）。
-
-**精确图文位置**：微信按 `js_content` 子节点 DOM 顺序；飞书按 `data-block-id` 整数排序重建。
-飞书图片是 `blob:` URL，会被虚拟滚动卸载，脚本在可见时即时 `fetch`→base64 落盘，按字节指纹去重。
-
 ## 执行流程
 
 1. `--show-config` 看有没有保存的目录；没有就**问用户存到哪里**，用 `--out` 指定（自动记住）。
@@ -102,18 +85,3 @@ python <skill_dir>/scripts/clip.py "<URL>"
 4. 若目标目录是有自身约定的知识库，按其约定收尾（如更新索引/日志）；否则跳过。
 5. 向用户汇报：标题、落地路径、图片数；失败的列出来并说明（stub 已写）。
 
-## 已验证
-
-- ✅ 微信公众号（含图、列表、标题、代码块，精确图文位置）
-- ✅ 飞书 Wiki（虚拟滚动全文 + 7 张图精确定位）
-- ✅ 知乎专栏（非 headless 渲染，正文 + 图片直链下载定位）
-- ✅ 小红书图文笔记（免登录拿文案 + `urlDefault` 提笔记图，图库附正文后）
-- ✅ 普通博客（urllib + trafilatura，零浏览器）
-
-## 未验证 / 注意
-
-- 小红书**视频**笔记只会拿到文案，封面/视频未处理。
-- 小红书图片是图库形式附在正文末尾（XHS 笔记本无图文交错结构），非逐段插入。
-- 小红书 `title`/frontmatter 用整段文案（XHS 笔记无独立标题）；文件名 slug 已截到第一个句末标点。
-- 微信文章标题级别：公众号作者常用扁平 `<h2>`，脚本忠实保留为 `##`，不强行推断子级。
-- 脚本不做正文语义改写（零 token）；如需更干净的排版，再让 Claude 过一遍（有 token 成本）。
