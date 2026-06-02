@@ -81,12 +81,6 @@ python scripts/clip.py --set-out "/path/to/notes"
 | `CLIP_OUT` | 默认输出根目录（`--out` 优先） |
 | `CLIP_HEADLESS=1` | 渲染分支改用 headless（无显示器服务器配合 `xvfb-run`） |
 
-## 已知限制
-
-- **小红书视频笔记**只拿文案，封面/视频未处理。
-- 小红书图片是图库形式附在正文末尾（XHS 笔记本身无图文交错结构）。
-- 知乎渲染分支默认非 headless，**无显示器的服务器**需用 `xvfb-run` 包裹，或设 `CLIP_HEADLESS=1`（headless 可能重新被风控拦）。
-- 脚本不做正文语义改写；如需更干净排版，再让 LLM 过一遍。
 
 ## 作为 Claude Code / agent skill 使用
 
