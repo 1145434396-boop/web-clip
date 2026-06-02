@@ -153,6 +153,12 @@ def fetch_wechat(url, slug, assets_dir):
                     else:
                         lines.append(txt)
                     lines.append('')
+                # 补捞包在 span 等非块级元素里的图片（否则会被当叶子丢掉）
+                for im in node.iter('img'):
+                    fn = dl(im.get('data-src') or im.get('src'))
+                    if fn:
+                        lines.append(f'![](assets/{fn})')
+                        lines.append('')
                 return
         for c in node:
             walk(c)
@@ -431,6 +437,10 @@ def _download_md_images(md, url, slug, assets_dir):
 
     def repl(m):
         src = m.group(1).replace('&amp;', '&')
+        # 解码 Next.js /_next/image?url=ENCODED 代理，取真实 CDN 原图
+        nx = re.search(r'/_next/image\?url=([^&]+)', src)
+        if nx:
+            src = urllib.parse.unquote(nx.group(1))
         if src.startswith('data:') or not src.startswith('http'):
             return m.group(0)
         if src in seen:
@@ -495,6 +505,31 @@ def fetch_rendered(url, slug, assets_dir):
         page = ctx.new_page()
         page.goto(url, wait_until='domcontentloaded', timeout=45000)
         page.wait_for_timeout(5000)
+        # 滚动到底触发懒加载，再解懒加载/代理把真实地址写回 img.src
+        try:
+            h = page.evaluate('document.body.scrollHeight')
+            pos = 0
+            while pos <= h:
+                page.evaluate(f'window.scrollTo(0,{pos})')
+                page.wait_for_timeout(200)
+                pos += 600
+                h = page.evaluate('document.body.scrollHeight')
+            page.evaluate('window.scrollTo(0,0)')
+            page.wait_for_timeout(500)
+            page.evaluate("""() => {
+              const dec = u => { const m=(u||'').match(/\\/_next\\/image\\?url=([^&]+)/); if(m){try{return decodeURIComponent(m[1])}catch(e){}} return u; };
+              for (const img of document.querySelectorAll('img')) {
+                let u = img.currentSrc || img.getAttribute('src') || img.getAttribute('data-src') || '';
+                if ((!u || u.startsWith('data:')) && img.getAttribute('srcset')) {
+                  const c = img.getAttribute('srcset').split(',').map(s=>s.trim().split(/\\s+/)[0]).filter(Boolean);
+                  if (c.length) u = c[c.length-1];
+                }
+                u = dec(u);
+                if (u && u.startsWith('http')) img.setAttribute('src', u);
+              }
+            }""")
+        except Exception:
+            pass
         page_title = page.title()
         html = page.content()
         body_text = page.inner_text('body')
