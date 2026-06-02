@@ -480,6 +480,14 @@ def fetch_generic(url, slug, assets_dir):
         html = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', 'replace')
         md, title, author = _trafilatura_md(html)
         if md and len(md.strip()) > 200:
+            # 正文图片数明显少于页面实际 <img> 数 → trafilatura 漏图，先升级渲染 DOM 抽取（在下图之前，避免重复/孤儿）
+            raw_imgs = len(re.findall(r'<img\b[^>]*\bsrc=', html))
+            md_refs = len(re.findall(r'!\[[^\]]*\]\(', md))
+            if md_refs <= 1 and raw_imgs >= 4:
+                try:
+                    return fetch_rendered(url, slug, assets_dir)
+                except Exception:
+                    pass
             md, n = _download_md_images(md, url, slug, assets_dir)
             return title, author, urllib.parse.urlparse(url).netloc, md, n
     except Exception:
@@ -493,6 +501,10 @@ def fetch_rendered(url, slug, assets_dir):
     云端无显示器需用 xvfb-run 包裹，或设 BOMI_HEADLESS=1。"""
     from playwright.sync_api import sync_playwright
     headless = os.environ.get('CLIP_HEADLESS', '') == '1'
+    libdir = os.path.dirname(__file__)
+    readability_js = open(os.path.join(libdir, 'libs', 'readability.js'), encoding='utf-8').read()
+    turndown_js = open(os.path.join(libdir, 'libs', 'turndown.js'), encoding='utf-8').read()
+    generic_js = open(os.path.join(libdir, 'generic-extract.js'), encoding='utf-8').read()
     with sync_playwright() as p:
         launch_args = ['--disable-blink-features=AutomationControlled']
         try:
@@ -505,31 +517,15 @@ def fetch_rendered(url, slug, assets_dir):
         page = ctx.new_page()
         page.goto(url, wait_until='domcontentloaded', timeout=45000)
         page.wait_for_timeout(5000)
-        # 滚动到底触发懒加载，再解懒加载/代理把真实地址写回 img.src
+        # 在活 DOM 上做抽取（提取器内部含滚动加载 / 解懒加载 / _next 解码 / 首图兜底）
+        result = None
         try:
-            h = page.evaluate('document.body.scrollHeight')
-            pos = 0
-            while pos <= h:
-                page.evaluate(f'window.scrollTo(0,{pos})')
-                page.wait_for_timeout(200)
-                pos += 600
-                h = page.evaluate('document.body.scrollHeight')
-            page.evaluate('window.scrollTo(0,0)')
-            page.wait_for_timeout(500)
-            page.evaluate("""() => {
-              const dec = u => { const m=(u||'').match(/\\/_next\\/image\\?url=([^&]+)/); if(m){try{return decodeURIComponent(m[1])}catch(e){}} return u; };
-              for (const img of document.querySelectorAll('img')) {
-                let u = img.currentSrc || img.getAttribute('src') || img.getAttribute('data-src') || '';
-                if ((!u || u.startsWith('data:')) && img.getAttribute('srcset')) {
-                  const c = img.getAttribute('srcset').split(',').map(s=>s.trim().split(/\\s+/)[0]).filter(Boolean);
-                  if (c.length) u = c[c.length-1];
-                }
-                u = dec(u);
-                if (u && u.startsWith('http')) img.setAttribute('src', u);
-              }
-            }""")
+            page.evaluate(readability_js)
+            page.evaluate(turndown_js)
+            page.evaluate(generic_js)
+            result = page.evaluate('async () => await window.__webclipExtractGeneric()')
         except Exception:
-            pass
+            result = None
         page_title = page.title()
         html = page.content()
         body_text = page.inner_text('body')
@@ -540,6 +536,14 @@ def fetch_rendered(url, slug, assets_dir):
             or ('登录' in body_text[:80] and len(body_text.strip()) < 400):
         raise RuntimeError('疑似登录墙或风控拦截（需登录态，浏览器渲染也拿不到正文）')
 
+    # 优先 DOM 抽取（图片由 Python urllib 下载，避开页面内 fetch 的跨域限制）
+    if result and (result.get('content') or '').strip() and len(result['content'].strip()) >= 200:
+        body = result['content']
+        title = result.get('title') or page_title
+        body, n = _download_md_images(body, url, slug, assets_dir)
+        return title, '', urllib.parse.urlparse(url).netloc, body, n
+
+    # 回退 trafilatura
     md, title, author = _trafilatura_md(html)
     if not md or len(md.strip()) < 200:
         raise RuntimeError('渲染后 trafilatura 仍提取过少')
