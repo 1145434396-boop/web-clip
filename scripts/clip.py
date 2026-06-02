@@ -28,7 +28,7 @@ Markdown + 图片，落地到用户指定的目录。全程零 LLM token。
     CLIP_OUT       默认输出根目录（命令行 --out 优先）
     CLIP_HEADLESS  设 1 则渲染分支用 headless（云端无显示器时配合 xvfb）
 """
-import sys, os, io, re, json, base64, hashlib, argparse, urllib.request, datetime, urllib.parse
+import sys, os, io, re, json, base64, hashlib, argparse, urllib.request, datetime, urllib.parse, subprocess
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -164,6 +164,155 @@ def fetch_wechat(url, slug, assets_dir):
     return title, author, '微信公众号', body, counter[0]
 
 
+# ---------- 飞书内嵌电子表格 / 多维表格：用 lark-cli 读取（需登录态）----------
+
+def _lark_json(args, timeout=90):
+    """运行 lark-cli <args> --json，返回解析后的 dict（失败返回 None）。"""
+    env = dict(os.environ)
+    env['LARK_CLI_NO_PROXY'] = '1'
+    try:
+        r = subprocess.run(['lark-cli'] + args + ['-q', '.'],
+                           capture_output=True, text=True, timeout=timeout, env=env)
+    except Exception:
+        return None
+    out = (r.stdout or '').strip()
+    try:
+        return json.loads(out)
+    except Exception:
+        i, j = out.find('{'), out.rfind('}')
+        if i >= 0 and j > i:
+            try:
+                return json.loads(out[i:j + 1])
+            except Exception:
+                return None
+        return None
+
+
+def _col_letter(n):
+    s = ''
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        s = chr(65 + rem) + s
+    return s or 'A'
+
+
+def _values_to_md(values):
+    """二维数组 -> markdown 表格（去尾部空行空列，首行作表头）。"""
+    grid = []
+    for row in values or []:
+        grid.append([('' if c is None else str(c)).replace('\n', '<br>').replace('|', '\\|').strip()
+                     for c in row])
+    while grid and not any(grid[-1]):
+        grid.pop()
+    if not grid:
+        return None
+    maxc = max(len(r) for r in grid)
+    for r in grid:
+        r += [''] * (maxc - len(r))
+    while maxc > 0 and all(r[maxc - 1] == '' for r in grid):
+        for r in grid:
+            r.pop()
+        maxc -= 1
+    if maxc == 0:
+        return None
+    header = grid[0]
+    md = ['| ' + ' | '.join(header) + ' |',
+          '| ' + ' | '.join(['---'] * maxc) + ' |']
+    for r in grid[1:]:
+        md.append('| ' + ' | '.join(r) + ' |')
+    return '\n'.join(md)
+
+
+def _read_sheet_md(token):
+    """内嵌电子表格 token = {spreadsheet_token}_{sheet_id}。"""
+    if '_' not in token:
+        return None
+    sp, sid = token.rsplit('_', 1)
+    info = _lark_json(['sheets', '+info', '--spreadsheet-token', sp, '--as', 'user'])
+    if not info or not info.get('ok'):
+        return None
+    sheets = (((info.get('data') or {}).get('sheets') or {}).get('sheets')) or []
+    grid = None
+    for sh in sheets:
+        if sh.get('sheet_id') == sid:
+            grid = sh.get('grid_properties') or {}
+            break
+    if grid is None:
+        return None
+    rows, cols = grid.get('row_count') or 0, grid.get('column_count') or 0
+    if not rows or not cols:
+        return None
+    rng = 'A1:%s%d' % (_col_letter(cols), rows)
+    rd = _lark_json(['sheets', '+read', '--spreadsheet-token', sp, '--sheet-id', sid,
+                     '--range', rng, '--value-render-option', 'ToString', '--as', 'user'])
+    if not rd or not rd.get('ok'):
+        return None
+    values = (((rd.get('data') or {}).get('valueRange') or {}).get('values')) or []
+    return _values_to_md(values)
+
+
+def _bitable_cell_text(v):
+    """把多维表格单元格值转成纯文本。"""
+    if v is None:
+        return ''
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (int, float, bool)):
+        return str(v)
+    if isinstance(v, list):
+        return ' '.join(_bitable_cell_text(x) for x in v if x is not None)
+    if isinstance(v, dict):
+        for k in ('text', 'name', 'en_name', 'link'):
+            if v.get(k):
+                return str(v[k])
+        return ''
+    return str(v)
+
+
+def _read_bitable_md(token):
+    """内嵌多维表格 token = {base_token}[_{table_id}]（best-effort）。"""
+    if '_' in token:
+        base, table = token.rsplit('_', 1)
+    else:
+        base, table = token, None
+    if not table:
+        tl = _lark_json(['base', '+table-list', '--base-token', base, '--as', 'user'])
+        items = ((tl or {}).get('data') or {}).get('items') or ((tl or {}).get('data') or {}).get('tables') or []
+        if items:
+            table = items[0].get('table_id') or items[0].get('id')
+    if not table:
+        return None
+    fl = _lark_json(['base', '+field-list', '--base-token', base, '--table-id', table, '--as', 'user'])
+    fields = ((fl or {}).get('data') or {}).get('items') or []
+    names = [f.get('field_name') for f in fields if f.get('field_name')]
+    if not names:
+        return None
+    rl = _lark_json(['base', '+record-list', '--base-token', base, '--table-id', table, '--limit', '200', '--as', 'user'])
+    if not rl or not rl.get('ok'):
+        return None
+    recs = ((rl.get('data') or {}).get('items')) or []
+    grid = [names]
+    for rec in recs:
+        f = rec.get('fields') or {}
+        grid.append([_bitable_cell_text(f.get(n)) for n in names])
+    return _values_to_md(grid)
+
+
+def _resolve_feishu_embeds(body):
+    """把 [[WBCLIP_EMBED:sheet|bitable:TOKEN]] 占位符替换成实际表格（失败回退中文标签）。"""
+    def repl(m):
+        kind, tok = m.group(1), m.group(2)
+        try:
+            md = _read_sheet_md(tok) if kind == 'sheet' else _read_bitable_md(tok)
+        except Exception:
+            md = None
+        if md:
+            return md
+        return '[飞书电子表格]' if kind == 'sheet' else '[飞书多维表格]'
+    return re.sub(r'\[\[WBCLIP_EMBED:(sheet|bitable):([^\]]+)\]\]', repl, body)
+
+
+
 # ---------- 飞书 Wiki / 文档：Playwright ----------
 
 def fetch_feishu(url, slug, assets_dir):
@@ -218,6 +367,7 @@ def fetch_feishu(url, slug, assets_dir):
         body = body.replace(key, f'assets/{fname}')
         counter += 1
 
+    body = _resolve_feishu_embeds(body)
     return title, '', '飞书', body, counter
 
 

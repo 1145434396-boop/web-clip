@@ -187,8 +187,8 @@
           else lines.push('[\u98de\u4e66\u753b\u677f]', '');
           break;
         }
-        case 'sheet': lines.push('[\u98de\u4e66\u7535\u5b50\u8868\u683c]', ''); break;
-        case 'bitable': lines.push('[\u98de\u4e66\u591a\u7ef4\u8868\u683c]', ''); break;
+        case 'sheet': { const tk = b.snapshot && b.snapshot.token; lines.push(tk ? ('[[WBCLIP_EMBED:sheet:' + tk + ']]') : '[\u98de\u4e66\u7535\u5b50\u8868\u683c]', ''); break; }
+        case 'bitable': { const tk = b.snapshot && b.snapshot.token; lines.push(tk ? ('[[WBCLIP_EMBED:bitable:' + tk + ']]') : '[\u98de\u4e66\u591a\u7ef4\u8868\u683c]', ''); break; }
         case 'table': await renderTable(b, lines); break;
         case 'grid': case 'grid_column': { for (const c of b.children || []) await render(c, depth); break; }
         default: { const x = blockText(b); if (x) lines.push(x, ''); for (const c of b.children || []) await render(c, depth); }
