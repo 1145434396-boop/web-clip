@@ -167,132 +167,58 @@ def fetch_wechat(url, slug, assets_dir):
 # ---------- 飞书 Wiki / 文档：Playwright ----------
 
 def fetch_feishu(url, slug, assets_dir):
+    """基于飞书页面内部模型 window.PageMain 提取，保留表格格式、画板图片。"""
     from playwright.sync_api import sync_playwright
 
-    title = ''
-    author = ''
-    blocks = {}        # id(int) -> {type, text}
-    img_file = {}      # id(int) -> filename
-    fp_seen = {}       # fingerprint -> filename
-    counter = [0]
+    extractor = open(os.path.join(os.path.dirname(__file__), 'feishu-extract.js'),
+                     encoding='utf-8').read()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={'width': 1280, 'height': 2000},
-                                user_agent=UA)
+        page = browser.new_page(viewport={'width': 1280, 'height': 2000}, user_agent=UA)
         page.goto(url, wait_until='networkidle', timeout=45000)
         page.wait_for_timeout(4000)
-        title = (page.title() or '').replace(' - 飞书云文档', '').replace(' - Feishu Docs', '').strip()
 
+        # 滚动加载，触发画板/图片等懒加载块初始化
         container = '.bear-web-x-container'
         if not page.query_selector(container):
             container = 'body'
         max_scroll = page.evaluate(f'(document.querySelector("{container}")||document.body).scrollHeight')
-
-        def harvest():
-            return page.evaluate('''async (sel) => {
-                const root = document.querySelector(sel) || document.body;
-                const bs = root.querySelectorAll('[data-block-id][data-block-type]');
-                const out = [];
-                for (const b of bs) {
-                    const type = b.getAttribute('data-block-type');
-                    const id = b.getAttribute('data-block-id');
-                    if (type === 'page') continue;
-                    const rec = {id, type};
-                    if (type === 'image') {
-                        const img = b.querySelector('img');
-                        if (img && img.naturalWidth >= 100) {
-                            try {
-                                const resp = await fetch(img.src);
-                                const blob = await resp.blob();
-                                rec.dataUrl = await new Promise(r => {
-                                    const fr = new FileReader();
-                                    fr.onloadend = () => r(fr.result);
-                                    fr.readAsDataURL(blob);
-                                });
-                            } catch(e) {}
-                        }
-                    } else {
-                        rec.text = (b.innerText || '').replace(/​/g, '').trim();
-                    }
-                    out.push(rec);
-                }
-                return out;
-            }''', container)
-
         pos = 0
-        while pos <= max_scroll + 400:
+        while pos <= max_scroll + 800:
             page.evaluate(f'(document.querySelector("{container}")||document.body).scrollTop = {pos}')
-            page.wait_for_timeout(300)
-            for rec in harvest():
-                bid = int(rec['id'])
-                if rec['type'] == 'image':
-                    if bid in img_file or 'dataUrl' not in rec:
-                        continue
-                    header, b64 = rec['dataUrl'].split(',', 1)
-                    data = base64.b64decode(b64)
-                    fp = (len(data), data[:16])
-                    if fp in fp_seen:
-                        img_file[bid] = fp_seen[fp]
-                        blocks[bid] = {'type': 'image'}
-                        continue
-                    fname = f'{slug}-{counter[0]:02d}.{ext_from(header)}'
-                    with open(os.path.join(assets_dir, fname), 'wb') as f:
-                        f.write(data)
-                    img_file[bid] = fname
-                    fp_seen[fp] = fname
-                    counter[0] += 1
-                    blocks[bid] = {'type': 'image'}
-                else:
-                    t = rec.get('text', '')
-                    if bid not in blocks or len(t) > len(blocks[bid].get('text', '')):
-                        blocks[bid] = {'type': rec['type'], 'text': t}
-            # recompute scrollHeight (grows as content loads)
+            page.wait_for_timeout(250)
             max_scroll = page.evaluate(f'(document.querySelector("{container}")||document.body).scrollHeight')
-            pos += 400
+            pos += 600
+        page.wait_for_timeout(2000)
 
+        page.evaluate(extractor)
+        result = page.evaluate('async () => await window.__webclipExtractFeishu()')
         browser.close()
 
-    # normalize heading levels
-    hl = [int(re.search(r'(\d)', b['type']).group(1))
-          for b in blocks.values()
-          if b['type'].startswith('heading') and re.search(r'(\d)', b['type'])]
-    min_h = min(hl) if hl else 1
+    if not result:
+        raise RuntimeError('window.PageMain 不可用（可能未登录或文档未加载）')
 
-    lines = []
-    for bid in sorted(blocks.keys()):
-        b = blocks[bid]
-        t = b['type']
-        if t == 'image':
-            fn = img_file.get(bid)
-            if fn:
-                lines.append(f'![](assets/{fn})')
-                lines.append('')
-            continue
-        text = b.get('text', '').strip()
-        if not text:
-            continue
-        if t.startswith('heading'):
-            m = re.search(r'(\d)', t)
-            lvl = int(m.group(1)) if m else 1
-            lines.append('#' * min(2 + (lvl - min_h), 6) + ' ' + text)
-        elif t == 'quote':
-            for ln in text.split('\n'):
-                lines.append('> ' + ln)
-        elif t == 'code':
-            rl = text.split('\n')
-            if '复制' in rl:
-                rl = rl[rl.index('复制') + 1:]
-            lines.append('```\n' + '\n'.join(rl).strip() + '\n```')
-        elif t in ('bullet', 'ordered'):
-            lines.append('- ' + text)
-        elif t == 'divider':
-            continue
-        else:
-            lines.append(text)
-        lines.append('')
+    title = result.get('title', '')
+    body = result.get('content', '')
+    images = result.get('images', {})
 
-    return title, author, '飞书', '\n'.join(lines), counter[0]
+    # 落盘图片，替换占位符
+    counter = 0
+    for key, rec in images.items():
+        try:
+            data_url = rec['dataUrl']
+            header, b64 = data_url.split(',', 1)
+            data = base64.b64decode(b64)
+        except Exception:
+            continue
+        fname = f'{slug}-{counter:02d}.{ext_from(header)}'
+        with open(os.path.join(assets_dir, fname), 'wb') as f:
+            f.write(data)
+        body = body.replace(key, f'assets/{fname}')
+        counter += 1
+
+    return title, '', '飞书', body, counter
 
 
 # ---------- 小红书：urllib 拿文案 + urlDefault 提图 ----------

@@ -16,7 +16,7 @@
 | 来源 | 抓取方式 | 状态 |
 |------|---------|------|
 | 微信公众号 `mp.weixin.qq.com` | urllib + 浏览器 UA → lxml 遍历 `js_content` | ✅ 完整 + 精确图文位置 |
-| 飞书 Wiki/文档 `*.feishu.cn` | Playwright 分段滚动 + `data-block-id` 重排 | ✅ 完整 + 精确图文位置 |
+| 飞书 Wiki/文档 `*.feishu.cn` | Playwright 读 `window.PageMain` 内部模型树 | ✅ 表格格式 / 画板图片 / 文档引用链接 |
 | 知乎专栏 `zhihu.com` | 非 headless 真实 Chrome 渲染 + trafilatura | ✅ 完整 + 图片 |
 | 小红书 `xiaohongshu.com` | urllib 拿文案（initial-state，免登录）+ `urlDefault` 提图 | ✅ 图文笔记（图库式） |
 | 普通博客 / 其它 | urllib + trafilatura；失败转浏览器渲染 | ✅ 服务端渲染站点 |
