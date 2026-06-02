@@ -48,6 +48,9 @@ window.__webclipExtractGeneric = async function () {
   let content = td.turndown(article.content);
   const title = (article.title || document.title || '').replace(INVISIBLE, '').trim();
 
+  // 去掉正文开头的 H1（文章首个 H1 即标题，外层会单独添加，避免重复；只删 # 不碰 ##）
+  content = content.replace(/^\s*#\s+[^\n]+\n+/, '');
+
   // 首图若未被正文收录，补到开头
   if (leadUrl && !content.includes(leadUrl)) content = `![](${leadUrl})\n\n` + content;
 

@@ -684,7 +684,9 @@ def main():
               'status: ok',
               '---', '']
         head = f'# {title}\n' if title else ''
-        md = '\n'.join(fm) + head + '\n' + body.strip() + '\n'
+        # 去掉正文开头与标题重复的 H1（标题由 head 单独添加；只删 # 不碰 ##）
+        clean_body = re.sub(r'^\s*#\s+[^\n]+\n+', '', body.strip(), count=1)
+        md = '\n'.join(fm) + head + '\n' + clean_body + '\n'
         md = re.sub(r'\n{3,}', '\n\n', md)
         path = os.path.join(articles_dir, f'{slug}.md')
         with open(path, 'w', encoding='utf-8') as f:
