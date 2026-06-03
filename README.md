@@ -15,14 +15,14 @@
 
 ## 支持的来源
 
-| 来源 | 抓取方式 | 状态 |
-|------|---------|------|
-| 微信公众号 `mp.weixin.qq.com` | urllib + 浏览器 UA → lxml 遍历 `js_content` | ✅ 完整 + 精确图文位置 |
-| 飞书 Wiki/文档 `*.feishu.cn` | Playwright 分段滚动 + `data-block-id` 重排 | ✅ 完整 + 精确图文位置 |
-| 知乎专栏 `zhihu.com` | 非 headless 真实 Chrome 渲染 + trafilatura | ✅ 完整 + 图片 |
-| 小红书 `xiaohongshu.com` | urllib 拿文案（initial-state，免登录）+ `urlDefault` 提图 | ✅ 图文笔记（图库式） |
-| 普通博客 / 其它 | urllib + trafilatura；失败转浏览器渲染 | ✅ 服务端渲染站点 |
-| 任一失败 | 写 stub | 保住链接，`status: failed` |
+| 来源 | 抓取的内容 | 说明 |
+|------|-----------|------|
+| **微信公众号** `mp.weixin.qq.com` | 标题、正文、图片 | 图文按原位置精确还原 |
+| **飞书 Wiki / 文档** `*.feishu.cn` | 标题、正文、**表格**、图片 | 结构完整，图文同步 |
+| **知乎专栏** `zhihu.com` | 标题、正文、图片 | 需登录才能看的文章也能抓 |
+| **小红书** `xiaohongshu.com` | 笔记文案 + 配图 | 免登录；配图以图库形式附在文末 |
+| **普通博客 / 新闻 / 其它网页** | 标题、正文、图片 | 静态与动态渲染站点都自动适配 |
+| **抓取失败时** | 保留链接占位 | 内容不丢，标记为待重试 |
 
 ## 和 Chrome 插件版的区别：什么时候用哪个
 
